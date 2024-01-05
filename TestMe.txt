@@ -1,0 +1,70 @@
+-- Create new Identity tables
+CREATE TABLE [dbo].[AspNetRoles] (
+    [Id] NVARCHAR(450) NOT NULL,
+    [Name] NVARCHAR(256) NULL,
+    [NormalizedName] NVARCHAR(256) NULL,
+    [ConcurrencyStamp] NVARCHAR(256) NULL,
+    CONSTRAINT [PK_AspNetRoles] PRIMARY KEY ([Id])
+);
+
+CREATE TABLE [dbo].[AspNetUsers] (
+    [Id] NVARCHAR(450) NOT NULL,
+    [UserName] NVARCHAR(256) NULL,
+    [NormalizedUserName] NVARCHAR(256) NULL,
+    [Email] NVARCHAR(256) NULL,
+    [NormalizedEmail] NVARCHAR(256) NULL,
+    [EmailConfirmed] BIT NOT NULL,
+    [PasswordHash] NVARCHAR(MAX) NULL,
+    [SecurityStamp] NVARCHAR(MAX) NULL,
+    [ConcurrencyStamp] NVARCHAR(MAX) NULL,
+    [PhoneNumber] NVARCHAR(MAX) NULL,
+    [PhoneNumberConfirmed] BIT NOT NULL,
+    [TwoFactorEnabled] BIT NOT NULL,
+    [LockoutEnd] DATETIMEOFFSET NULL,
+    [LockoutEnabled] BIT NOT NULL,
+    [AccessFailedCount] INT NOT NULL,
+    CONSTRAINT [PK_AspNetUsers] PRIMARY KEY ([Id])
+);
+
+CREATE TABLE [dbo].[AspNetUserRoles] (
+    [UserId] NVARCHAR(450) NOT NULL,
+    [RoleId] NVARCHAR(450) NOT NULL,
+    CONSTRAINT [PK_AspNetUserRoles] PRIMARY KEY ([UserId], [RoleId]),
+    CONSTRAINT [FK_AspNetUserRoles_AspNetRoles_RoleId] FOREIGN KEY ([RoleId]) REFERENCES [AspNetRoles]([Id]) ON DELETE CASCADE,
+    CONSTRAINT [FK_AspNetUserRoles_AspNetUsers_UserId] FOREIGN KEY ([UserId]) REFERENCES [AspNetUsers]([Id]) ON DELETE CASCADE
+);
+
+CREATE TABLE [dbo].[AspNetUserClaims] (
+    [Id] INT IDENTITY(1,1) NOT NULL,
+    [UserId] NVARCHAR(450) NOT NULL,
+    [ClaimType] NVARCHAR(MAX) NULL,
+    [ClaimValue] NVARCHAR(MAX) NULL,
+    CONSTRAINT [PK_AspNetUserClaims] PRIMARY KEY ([Id]),
+    CONSTRAINT [FK_AspNetUserClaims_AspNetUsers_UserId] FOREIGN KEY ([UserId]) REFERENCES [AspNetUsers]([Id]) ON DELETE CASCADE
+);
+
+CREATE TABLE [dbo].[AspNetRoleClaims] (
+    [Id] INT IDENTITY(1,1) NOT NULL,
+    [RoleId] NVARCHAR(450) NOT NULL,
+    [ClaimType] NVARCHAR(MAX) NULL,
+    [ClaimValue] NVARCHAR(MAX) NULL,
+    CONSTRAINT [PK_AspNetRoleClaims] PRIMARY KEY ([Id]),
+    CONSTRAINT [FK_AspNetRoleClaims_AspNetRoles_RoleId] FOREIGN KEY ([RoleId]) REFERENCES [AspNetRoles]([Id]) ON DELETE CASCADE
+);
+
+-- Migrate data from old tables to new Identity tables
+-- Example migration for Users
+INSERT INTO [AspNetUsers] (Id, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp)
+SELECT UserId, UserName, LOWER(UserName), Email, LOWER(Email), IsApproved, Password, NEWID() FROM aspnet_Users;
+
+-- Example migration for Roles
+INSERT INTO [AspNetRoles] (Id, Name, NormalizedName)
+SELECT RoleId, RoleName, LOWER(RoleName) FROM aspnet_Roles;
+
+-- Example migration for UserRoles
+INSERT INTO [AspNetUserRoles] (UserId, RoleId)
+SELECT UserId, RoleId FROM aspnet_UsersInRoles;
+
+-- You may also need to migrate Claims if you have them in the old system
+-- INSERT INTO [AspNetUserClaims] (UserId, ClaimType, ClaimValue)
+-- SELECT UserId, ClaimType, ClaimValue FROM [YourOldClaimsTable];
