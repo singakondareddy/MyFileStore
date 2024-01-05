@@ -1,0 +1,206 @@
+public class JwtSettings
+{
+    public string SecretKey { get; set; }
+    public int ExpirationDays { get; set; }
+    // Other JWT settings...
+}
+
+public class LoginModel
+{
+    public string Username { get; set; }
+    public string Password { get; set; }
+}
+//--------------------
+public void ConfigureServices(IServiceCollection services)
+{
+    // Add Identity services
+    services.AddIdentity<IdentityUser, IdentityRole>()
+        .AddEntityFrameworkStores<ApplicationDbContext>() // Replace ApplicationDbContext with your DbContext
+        .AddDefaultTokenProviders();
+
+    // JWT settings
+    var jwtSettings = new JwtSettings();
+    Configuration.Bind(nameof(jwtSettings), jwtSettings);
+    services.AddSingleton(jwtSettings);
+
+    var tokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSettings.SecretKey)),
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ClockSkew = TimeSpan.Zero
+    };
+    services.AddSingleton(tokenValidationParameters);
+
+    services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = tokenValidationParameters;
+    });
+
+    services.AddControllers();
+    // Other service configurations...
+}
+
+public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+{
+    // Middleware configurations...
+
+    app.UseMiddleware<JwtMiddleware>();
+
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    app.UseEndpoints(endpoints =>
+    {
+        endpoints.MapControllers();
+    });
+}
+//--------------------
+using Microsoft.AspNetCore.Http;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+public class JwtMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly JwtSettings _jwtSettings;
+    private readonly TokenValidationParameters _tokenValidationParameters;
+
+    public JwtMiddleware(RequestDelegate next, JwtSettings jwtSettings, TokenValidationParameters tokenValidationParameters)
+    {
+        _next = next;
+        _jwtSettings = jwtSettings;
+        _tokenValidationParameters = tokenValidationParameters;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var token = context.Request.Headers["Authorization"].FirstOrDefault()?.Split(" ").Last();
+        if (token != null)
+        {
+            AttachUserToContext(context, token);
+        }
+
+        await _next(context);
+    }
+
+    private void AttachUserToContext(HttpContext context, string token)
+    {
+        try
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.ASCII.GetBytes(_jwtSettings.SecretKey);
+
+            tokenHandler.ValidateToken(token, _tokenValidationParameters, out SecurityToken validatedToken);
+
+            var jwtToken = (JwtSecurityToken)validatedToken;
+            var userId = jwtToken.Claims.First(x => x.Type == "sub").Value;
+
+            // If token is close to expiration, regenerate it
+            if (jwtToken.ValidTo <= DateTime.UtcNow.AddMinutes(5))
+            {
+                var newToken = GenerateJwtToken(userId);
+                context.Request.Headers["Authorization"] = $"Bearer {newToken}";
+            }
+        }
+        catch
+        {
+            // Token validation failed
+        }
+    }
+
+    private string GenerateJwtToken(string userId)
+    {
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, userId),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.SecretKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: "YourIssuer",
+            audience: "YourAudience",
+            claims: claims,
+            expires: DateTime.UtcNow.AddDays(_jwtSettings.ExpirationDays),
+            signingCredentials: creds);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+//--------------------
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+
+[Route("api/[controller]")]
+[ApiController]
+public class AccountController : ControllerBase
+{
+    private readonly UserManager<IdentityUser> _userManager;
+    private readonly SignInManager<IdentityUser> _signInManager;
+    private readonly JwtSettings _jwtSettings;
+
+    public AccountController(UserManager<IdentityUser> userManager, SignInManager<IdentityUser> signInManager, JwtSettings jwtSettings)
+    {
+        _userManager = userManager;
+        _signInManager = signInManager;
+        _jwtSettings = jwtSettings;
+    }
+
+    [HttpPost("login")]
+    public async Task<IActionResult> Login(LoginModel model)
+    {
+        var user = await _userManager.FindByNameAsync(model.Username);
+        if (user != null)
+        {
+            var result = await _signInManager.CheckPasswordSignInAsync(user, model.Password, false);
+            if (result.Succeeded)
+            {
+                var token = GenerateJwtToken(user);
+                return Ok(new { Token = token });
+            }
+        }
+        return Unauthorized(new { Message = "Invalid credentials" });
+    }
+
+    private string GenerateJwtToken(IdentityUser user)
+    {
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.UserName),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.SecretKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: "YourIssuer",
+            audience: "YourAudience",
+            claims: claims,
+            expires: DateTime.UtcNow.AddDays(_jwtSettings.ExpirationDays),
+            signingCredentials: creds);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+//--------------------
